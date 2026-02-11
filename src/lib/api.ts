@@ -1,85 +1,73 @@
-import { supabaseRpc, supabaseSelect } from './supabase'
+﻿import { supabase } from './supabase';
 
-export type Role = 'stylist' | 'manager' | 'admin'
+export type Role = 'admin' | 'manager' | 'stylist';
 
-export interface StaffMember {
-  id: string
-  full_name: string
-  role: Role
-  is_active: boolean
+export interface StylistRow {
+  id: string;
+  full_name: string;
+  role: Role;
+  is_active: boolean;
+  pin?: string;
 }
 
-export interface DutyChecklist {
-  id: number
-  name: string
-  type: 'duty' | 'station'
+export interface ChecklistRow {
+  id: number;
+  name: string;
+  type: 'station' | 'duty';
+  is_active: boolean;
 }
 
-export interface SessionUser {
-  id: string
-  full_name: string
-  role: Role
+export async function listActiveStylists(): Promise<StylistRow[]> {
+  const { data, error } = await supabase
+    .from('stylists')
+    .select('id,full_name,role,is_active')
+    .eq('is_active', true)
+    .in('role', ['stylist', 'manager'])
+    .order('full_name', { ascending: true });
+
+  if (error) throw error;
+  return (data ?? []) as StylistRow[];
 }
 
-export async function listActiveStylists(): Promise<StaffMember[]> {
-  const query = new URLSearchParams({
-    select: 'id,full_name,role,is_active',
-    is_active: 'eq.true',
-    role: 'in.(stylist,manager)',
-    order: 'full_name.asc',
-  })
+export async function pinLogin(fullName: string, pin: string) {
+  const { data, error } = await supabase
+    .from('stylists')
+    .select('id,full_name,role,is_active,pin')
+    .eq('full_name', fullName)
+    .single();
 
-  return supabaseSelect<StaffMember>('staff', query.toString())
+  if (error) throw error;
+  if (!data || !data.is_active) throw new Error('User inactive or not found');
+  if (String(data.pin ?? '') !== String(pin)) throw new Error('Invalid PIN');
+
+  return { id: data.id as string, full_name: data.full_name as string, role: data.role as Role };
 }
 
-export async function pinLogin(fullName: string, pin: string): Promise<SessionUser | null> {
-  try {
-    const response = await supabaseRpc<SessionUser | SessionUser[] | null>('pin_login', {
-      p_full_name: fullName,
-      p_pin: pin,
-    })
+export async function listDutyChecklists(): Promise<ChecklistRow[]> {
+  const { data, error } = await supabase
+    .from('checklists')
+    .select('id,name,type,is_active')
+    .eq('is_active', true)
+    .eq('type', 'duty')
+    .order('name', { ascending: true });
 
-    if (!response) {
-      return null
-    }
-
-    return Array.isArray(response) ? response[0] ?? null : response
-  } catch {
-    const query = new URLSearchParams({
-      select: 'id,full_name,role',
-      full_name: `eq.${fullName}`,
-      pin: `eq.${pin}`,
-      is_active: 'eq.true',
-      limit: '1',
-    })
-
-    const users = await supabaseSelect<SessionUser>('staff', query.toString())
-    return users[0] ?? null
-  }
+  if (error) throw error;
+  return (data ?? []) as ChecklistRow[];
 }
 
-export async function listDutyChecklists(): Promise<DutyChecklist[]> {
-  const query = new URLSearchParams({
-    select: 'id,name,type',
-    type: 'eq.duty',
-    order: 'name.asc',
-  })
+export async function createAssignmentWithStation(params: {
+  stylistId: string;
+  date: string; // YYYY-MM-DD
+  dutyChecklistId: number;
+  createdBy: string;
+}) {
+  const { data, error } = await supabase.rpc('create_daily_assignment_with_station', {
+    p_stylist_id: params.stylistId,
+    p_assignment_date: params.date,
+    p_duty_checklist_id: params.dutyChecklistId,
+    p_created_by: params.createdBy,
+  });
 
-  return supabaseSelect<DutyChecklist>('checklists', query.toString())
-}
-
-interface CreateAssignmentInput {
-  stylistId: string
-  date: string
-  dutyChecklistId: number
-  createdBy: string
-}
-
-export async function createAssignmentWithStation(input: CreateAssignmentInput): Promise<void> {
-  await supabaseRpc<unknown>('create_daily_assignment_with_station', {
-    stylist_id: input.stylistId,
-    assignment_date: input.date,
-    duty_checklist_id: input.dutyChecklistId,
-    created_by: input.createdBy,
-  })
+  if (error) throw error;
+  return data as number;
 }
