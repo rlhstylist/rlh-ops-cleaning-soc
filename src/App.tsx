@@ -5,8 +5,10 @@ import {
   listActiveStylists,
   listDutyChecklists,
   pinLogin,
+  todayISODate,
 } from './lib/api'
 import type { SessionUser, StaffMember } from './lib/api'
+import { StylistToday } from './StylistToday'
 import './App.css'
 
 const SESSION_KEY = 'rlh-session'
@@ -34,10 +36,6 @@ function saveSession(session: SessionUser | null) {
   }
 
   localStorage.setItem(SESSION_KEY, JSON.stringify(session))
-}
-
-function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10)
 }
 
 function App() {
@@ -207,7 +205,7 @@ function ManagerPage({ session, onLogout }: { session: SessionUser; onLogout: ()
   const [checklists, setChecklists] = useState<{ id: number; name: string }[]>([])
   const [selectedStylistId, setSelectedStylistId] = useState('')
   const [selectedChecklistId, setSelectedChecklistId] = useState('')
-  const [date, setDate] = useState(todayIsoDate())
+  const [date, setDate] = useState(todayISODate())
   const [status, setStatus] = useState('')
   const [isSaving, setIsSaving] = useState(false)
 
@@ -321,8 +319,7 @@ function StylistPage({ session, onLogout }: { session: SessionUser; onLogout: ()
             Log out
           </button>
         </header>
-        <p>Welcome, {session.full_name}.</p>
-        <p className="muted">You only see your own cleaning and station checklist tasks in this view.</p>
+        <StylistToday stylistId={session.id} stylistName={session.full_name} />
       </section>
     </main>
   )

@@ -1,4 +1,4 @@
-﻿import { supabase } from './supabase';
+import { supabase } from './supabase';
 
 export type Role = 'admin' | 'manager' | 'stylist';
 
@@ -17,6 +17,29 @@ export interface ChecklistRow {
   is_active: boolean;
 }
 
+export interface SessionUser {
+  id: string;
+  full_name: string;
+  role: Role;
+}
+
+export type StaffMember = StylistRow;
+
+export interface StylistTask {
+  completion_id: number;
+  checklist_name: string;
+  section: string;
+  task_name: string;
+  sort_order: number;
+  completed_at: string | null;
+}
+
+export function todayISODate() {
+  const now = new Date();
+  const offsetMs = now.getTimezoneOffset() * 60_000;
+  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 10);
+}
+
 export async function listActiveStylists(): Promise<StylistRow[]> {
   const { data, error } = await supabase
     .from('stylists')
@@ -29,7 +52,7 @@ export async function listActiveStylists(): Promise<StylistRow[]> {
   return (data ?? []) as StylistRow[];
 }
 
-export async function pinLogin(fullName: string, pin: string) {
+export async function pinLogin(fullName: string, pin: string): Promise<SessionUser> {
   const { data, error } = await supabase
     .from('stylists')
     .select('id,full_name,role,is_active,pin')
@@ -70,4 +93,74 @@ export async function createAssignmentWithStation(params: {
 
   if (error) throw error;
   return data as number;
+}
+
+export async function getTodayTasksForStylist(params: {
+  stylist_id: string;
+  assignment_date?: string;
+}): Promise<{ assignment_id: number | null; tasks: StylistTask[] }> {
+  const assignmentDate = params.assignment_date ?? todayISODate();
+
+  const { data: assignment, error: assignmentError } = await supabase
+    .from('daily_assignments')
+    .select('id')
+    .eq('stylist_id', params.stylist_id)
+    .eq('assignment_date', assignmentDate)
+    .maybeSingle();
+
+  if (assignmentError) throw assignmentError;
+  if (!assignment) {
+    return { assignment_id: null, tasks: [] };
+  }
+
+  const { data: completions, error: completionsError } = await supabase
+    .from('task_completions')
+    .select(
+      `
+        id,
+        completed_at,
+        daily_assignment_checklist:daily_assignment_checklists!inner(
+          assignment_id,
+          checklist_task:checklist_tasks!inner(
+            name,
+            section,
+            sort_order,
+            checklist:checklists!inner(name)
+          )
+        )
+      `,
+    )
+    .eq('daily_assignment_checklists.assignment_id', assignment.id);
+
+  if (completionsError) throw completionsError;
+
+  const tasks = (completions ?? [])
+    .map((completion: any) => ({
+      completion_id: completion.id as number,
+      checklist_name: completion.daily_assignment_checklist?.checklist_task?.checklist?.name as string,
+      section: (completion.daily_assignment_checklist?.checklist_task?.section as string) || 'General',
+      task_name: completion.daily_assignment_checklist?.checklist_task?.name as string,
+      sort_order: Number(completion.daily_assignment_checklist?.checklist_task?.sort_order ?? 0),
+      completed_at: (completion.completed_at as string | null) ?? null,
+    }))
+    .sort((a, b) => {
+      const checklistCmp = a.checklist_name.localeCompare(b.checklist_name);
+      if (checklistCmp !== 0) return checklistCmp;
+      const sectionCmp = a.section.localeCompare(b.section);
+      if (sectionCmp !== 0) return sectionCmp;
+      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+      return a.task_name.localeCompare(b.task_name);
+    });
+
+  return { assignment_id: assignment.id as number, tasks };
+}
+
+export async function setTaskCompletion(params: { completion_id: number; completed: boolean }) {
+  const completedAt = params.completed ? new Date().toISOString() : null;
+  const { error } = await supabase
+    .from('task_completions')
+    .update({ completed_at: completedAt })
+    .eq('id', params.completion_id);
+
+  if (error) throw error;
 }
